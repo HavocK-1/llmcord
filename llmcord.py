@@ -179,7 +179,7 @@ async def should_respond(new_msg: discord.Message, provider_config: dict[str, An
     )
 
     messages = [
-        dict(role="system", content=system_persona),
+        dict(role="user", content=system_persona),
         dict(role="user", content=user_prompt),
     ]
 
