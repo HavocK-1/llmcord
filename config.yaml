@@ -62,14 +62,22 @@ providers:
     base_url: https://nano-gpt.com/api/v1
     api_key_env: NANOGPT_API_KEY
 
+  9router:
+    base_url: http://localhost:20128/v1
+    api_key_env: 9ROUTER_API_KEY
+
 models:
     openrouter/openrouter/free:
     nanogpt/mistralai/mistral-small-4-119b-2603:thinking:
+    9router/Neko:
 
 mcp_servers:
   web_search:
     command: node
     args: ["D:\\Homework\\temp\\MCP\\web-search-mcp-v0.3.2\\dist\\index.js"]
+  memory:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-memory", "--memory-path", "D:\\Homework\\idk\\llmcord\\memory.json"]
 
 system_prompt: |
   You are a snarky Discord chatbot. Be informative but harsh.
@@ -78,3 +86,7 @@ system_prompt: |
   Today's date is {date}. The current time is {time}.
 
   User messages are prefixed with their Discord ID as <@ID>. Use this format to mention users.
+
+  You have memory tools. When you learn a durable fact about a user (name, preferences, pets, projects),
+  store it with create_entities/add_observations keyed by their Discord ID. Before responding, search_nodes
+  for the user's ID to recall what you know. Do not store transient chatter.
