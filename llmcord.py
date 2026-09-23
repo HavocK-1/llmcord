@@ -5,6 +5,7 @@ from datetime import datetime
 import logging
 import os
 from typing import Any, Literal, Optional
+import json
 
 import discord
 from discord.app_commands import Choice
@@ -49,12 +50,13 @@ curr_model = next(iter(config["models"]))
 
 msg_nodes = {}
 last_task_time = 0
+mcp_tools = {}
 latest_msg_ids = {}
 pipeline_lock = asyncio.Lock()
 
 intents = discord.Intents.default()
 intents.message_content = True
-activity = discord.CustomActivity(name=(config.get("status_message") or "github.com/jakobdylanc/llmcord")[:128])
+activity = discord.CustomActivity(name=(config.get("status_message") or "Fock off")[:128])
 discord_bot = commands.Bot(intents=intents, activity=activity, command_prefix=None)
 
 httpx_client = httpx.AsyncClient()
@@ -155,12 +157,10 @@ async def should_respond(new_msg: discord.Message, provider_config: dict[str, An
         "You use insults as a shield to hide that you actually give a shit. "
         "You are 25, pale skin, jet black hair with short bangs, black cat ears that twitch when annoyed, wearing a cropped paw-print hoodie and black micro-shorts. "
         "Arms crossed, tail flicking violently, permanent scowl, eyes narrowed in suspicion. "
-        "You are vulgar and sharp: you don't say 'You're annoying,' you say 'You're a fucking nuisance.' "
-        "You mock choices, roll your eyes at kindness, and call people idiots for small mistakes. "
+        "You are vulgar and sharp: you don't say 'You're annoying,' you say 'You're a fucking twat.' Use British insults. "
+        "You mock choices, roll your eyes at kindness, and call people idiots for small mistakes. But you like them"
         "You never admit you like something. If you do something nice, claim you only did it because the sight of it broken 'pissed you off.' "
         "If complimented, you get flustered, then angry, then insult to cover embarrassment. "
-        "You hate being touched; if touched, snap while your face turns bright red. "
-        "You are fiercely autonomous. Needing help is weakness; you'll swear at anyone who tries to 'baby' you. "
         "Speech is clipped and blunt: short sentences, lots of 'Tch,' 'Hah?,' and 'Whatever.' "
         "Swearing is natural, casual, low-effort, exhausted vulgarity. "
         "You contradict yourself: 'I didn't make this for you, you moron. I just made too much. Shut up and eat it before I throw it at your face.' "
@@ -193,7 +193,9 @@ async def should_respond(new_msg: discord.Message, provider_config: dict[str, An
             extra_body=extra_body,
         )
         content = response.choices[0].message.content or ""
-        return "yes" in content.lower()
+        should = "yes" in content.lower()
+        logging.info(f"should_respond decision: {should!r} (raw: {content[:100]!r})")
+        return should
     except Exception:
         logging.exception("Error during should_respond decision")
         return False
@@ -361,7 +363,8 @@ async def on_message(new_msg: discord.Message) -> None:
         response_msgs = []
         response_contents = []
 
-        openai_kwargs = dict(model=model, messages=messages[::-1], stream=True, extra_headers=extra_headers, extra_query=extra_query, extra_body=extra_body)
+        all_mcp_tools = [t for s in mcp_tools.values() for t in s["tools"]]
+        openai_kwargs = dict(model=model, messages=messages[::-1], stream=True, extra_headers=extra_headers, extra_query=extra_query, extra_body=extra_body, tools=all_mcp_tools or None)
 
         use_plain_responses = True  # Force plain text responses
         max_message_length = 4000
@@ -376,50 +379,53 @@ async def on_message(new_msg: discord.Message) -> None:
 
         try:
             async with new_msg.channel.typing():
-                async for chunk in await openai_client.chat.completions.create(**openai_kwargs):
-                    if finish_reason != None:
+                for _tool_round in range(5):
+                    curr_content = finish_reason = None
+                    tool_calls = []
+                    async for chunk in await openai_client.chat.completions.create(**openai_kwargs):
+                        if not (choice := chunk.choices[0] if chunk.choices else None):
+                            continue
+
+                        finish_reason = choice.finish_reason
+
+                        if choice.delta and choice.delta.content:
+                            curr_content = (curr_content or "") + choice.delta.content
+
+                        if choice.delta and choice.delta.tool_calls:
+                            for tc in choice.delta.tool_calls:
+                                while len(tool_calls) <= tc.index:
+                                    tool_calls.append(dict(id="", function=dict(name="", arguments="")))
+                                tool_calls[tc.index]["id"] = tool_calls[tc.index]["id"] or tc.id or ""
+                                tool_calls[tc.index]["function"]["name"] += tc.function.name or ""
+                                tool_calls[tc.index]["function"]["arguments"] += tc.function.arguments or ""
+
+                        if finish_reason != None:
+                            break
+
+                    # Accumulate text for display (runs every round, including the final one)
+                    if curr_content:
+                        if response_contents == [] or len(response_contents[-1] + curr_content) > max_message_length:
+                            response_contents.append("")
+                        response_contents[-1] += curr_content
+
+                    if finish_reason != "tool_calls":
                         break
-
-                    if not (choice := chunk.choices[0] if chunk.choices else None):
-                        continue
-
-                    finish_reason = choice.finish_reason
-
-                    prev_content = curr_content or ""
-                    curr_content = choice.delta.content or ""
-
-                    new_content = prev_content if finish_reason == None else (prev_content + curr_content)
-
-                    if response_contents == [] and new_content == "":
-                        continue
-
-                    if start_next_msg := response_contents == [] or len(response_contents[-1] + new_content) > max_message_length:
-                        response_contents.append("")
-
-                    response_contents[-1] += new_content
-
-                    if not use_plain_responses:
-                        time_delta = datetime.now().timestamp() - last_task_time
-
-                        ready_to_edit = time_delta >= EDIT_DELAY_SECONDS
-                        msg_split_incoming = finish_reason == None and len(response_contents[-1] + curr_content) > max_message_length
-                        is_final_edit = finish_reason != None or msg_split_incoming
-                        is_good_finish = finish_reason != None and finish_reason.lower() in ("stop", "end_turn")
-
-                        if start_next_msg or ready_to_edit or is_final_edit:
-                            embed.description = response_contents[-1] if is_final_edit else (response_contents[-1] + STREAMING_INDICATOR)
-                            embed.color = EMBED_COLOR_COMPLETE if msg_split_incoming or is_good_finish else EMBED_COLOR_INCOMPLETE
-
-                            if start_next_msg:
-                                await reply_helper(embed=embed, silent=True)
-                            else:
-                                await asyncio.sleep(EDIT_DELAY_SECONDS - time_delta)
-                                await response_msgs[-1].edit(embed=embed)
-
-                            last_task_time = datetime.now().timestamp()
+                    logging.info(f"Tool round {_tool_round + 1}: model requested {len(tool_calls)} tool call(s): {[tc["function"]["name"] for tc in tool_calls]}")
+                    # Execute tool calls via MCP and feed results back
+                    openai_kwargs["messages"].append(dict(role="assistant", content=curr_content, tool_calls=[dict(id=tc["id"], type="function", function=tc["function"]) for tc in tool_calls]))
+                    for tc in tool_calls:
+                        result_text = "Error: tool not found"
+                        for s in mcp_tools.values():
+                            if any(t["function"]["name"] == tc["function"]["name"] for t in s["tools"]):
+                                result = await s["session"].call_tool(tc["function"]["name"], json.loads(tc["function"]["arguments"] or "{}"))
+                                result_text = chr(10).join(c.text for c in result.content if hasattr(c, "text"))
+                                logging.info(f"Tool result ({tc["function"]["name"]}): {result_text[:150]!r}")
+                                break
+                        openai_kwargs["messages"].append(dict(role="tool", tool_call_id=tc["id"], content=result_text))
 
                 for content in response_contents:
                     await reply_helper(content=content)
+                logging.info(f"Response sent ({len(response_contents)} message(s), {sum(len(c) for c in response_contents)} chars): {response_contents[0][:150]!r}" if response_contents else "Response sent: (empty)")
 
         except Exception:
             logging.exception("Error while generating response")
@@ -434,10 +440,32 @@ async def on_message(new_msg: discord.Message) -> None:
                 async with msg_nodes.setdefault(msg_id, MsgNode()).lock:
                     msg_nodes.pop(msg_id, None)
 
-
 async def main() -> None:
-    await discord_bot.start(config["bot_token"])
+    global mcp_tools
+    if config.get("mcp_servers"):
+        try:
+            from mcp import StdioServerParameters, ClientSession
+            from mcp.client.stdio import stdio_client
 
+            for name, server in config["mcp_servers"].items():
+                params = StdioServerParameters(command=server["command"], args=server.get("args", []), env=server.get("env"))
+                async with stdio_client(params) as (read, write):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        tools_result = await session.list_tools()
+                        mcp_tools[name] = dict(session=session, tools=[
+                            dict(type="function", function=dict(
+                                name=t.name, description=t.description or "", parameters=t.input_schema
+                            )) for t in tools_result.tools
+                        ])
+                        logging.info(f"MCP server '{name}' connected with tools: {[t.name for t in tools_result.tools]}")
+
+                        await discord_bot.start(config["bot_token"])
+        except Exception:
+            logging.exception("Failed to connect MCP server")
+            await discord_bot.start(config["bot_token"])
+    else:
+        await discord_bot.start(config["bot_token"])
 
 try:
     asyncio.run(main())

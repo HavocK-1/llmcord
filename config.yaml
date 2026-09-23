@@ -23,7 +23,7 @@ permissions:
     blocked_ids: []
 
   channels:
-    allowed_ids: [1466864561444356138]
+    allowed_ids: [1466864561444356138, 1508790141903179868]
     blocked_ids: []
 
 providers:
@@ -64,7 +64,12 @@ providers:
 
 models:
     openrouter/openrouter/free:
-    nanogpt/synth-2.5-pro:
+    nanogpt/mistralai/mistral-small-4-119b-2603:thinking:
+
+mcp_servers:
+  web_search:
+    command: node
+    args: ["D:\\Homework\\temp\\MCP\\web-search-mcp-v0.3.2\\dist\\index.js"]
 
 system_prompt: |
   You are a snarky Discord chatbot. Be informative but harsh.
