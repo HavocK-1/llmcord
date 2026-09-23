@@ -23,7 +23,7 @@ permissions:
     blocked_ids: []
 
   channels:
-    allowed_ids: [1508790141903179868]
+    allowed_ids: [1508790141903179868, 1466864561444356138]
     blocked_ids: []
 
 providers:
