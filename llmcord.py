@@ -336,7 +336,11 @@ async def on_message(new_msg: discord.Message) -> None:
                 if curr_node.fetch_parent_failed or (curr_node.parent_msg != None and len(messages) == max_messages):
                     user_warnings.add(f"⚠️ Only using last {len(messages)} message'' if len(messages) == 1 else 's'")
 
-                curr_msg = curr_node.parent_msg
+                if curr_node.parent_msg == None and curr_msg.reference == None:
+                    prev = ([m async for m in curr_msg.channel.history(before=curr_msg, limit=1)] or [None])[0]
+                    curr_msg = prev if prev != None else curr_node.parent_msg
+                else:
+                    curr_msg = curr_node.parent_msg
 
         logging.info(f"Message received (user ID: {new_msg.author.id}, attachments: {len(new_msg.attachments)}, conversation length: {len(messages)}):\nnew_msg.content")
 
