@@ -49,6 +49,7 @@ curr_model = next(iter(config["models"]))
 
 msg_nodes = {}
 last_task_time = 0
+latest_msg_ids = {}
 pipeline_lock = asyncio.Lock()
 
 intents = discord.Intents.default()
@@ -201,6 +202,7 @@ async def should_respond(new_msg: discord.Message, provider_config: dict[str, An
 @discord_bot.event
 async def on_message(new_msg: discord.Message) -> None:
     global last_task_time
+    latest_msg_ids[new_msg.channel.id] = new_msg.id
 
     if new_msg.author.bot:
         return
@@ -235,6 +237,9 @@ async def on_message(new_msg: discord.Message) -> None:
         return
 
     async with pipeline_lock:
+        # Skip if a newer message arrived in this channel while we were queued
+        if new_msg.id != latest_msg_ids.get(new_msg.channel.id):
+            return
         provider_slash_model = curr_model
         provider, model = provider_slash_model.removesuffix(":vision").split("/", 1)
 
