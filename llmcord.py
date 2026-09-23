@@ -360,7 +360,11 @@ async def on_message(new_msg: discord.Message) -> None:
                     user_warnings.add(f"⚠️ Only using last {len(messages)} message'' if len(messages) == 1 else 's'")
 
                 if curr_node.parent_msg == None and curr_msg.reference == None:
-                    prev = ([m async for m in curr_msg.channel.history(before=curr_msg, limit=1)] or [None])[0]
+                    try:
+                        prev = ([m async for m in curr_msg.channel.history(before=curr_msg, limit=1)] or [None])[0]
+                    except discord.HTTPException:
+                        logging.exception("Error fetching previous message in the chain")
+                        prev = None
                     curr_msg = prev if prev != None else curr_node.parent_msg
                 else:
                     curr_msg = curr_node.parent_msg
