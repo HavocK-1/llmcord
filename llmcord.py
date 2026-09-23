@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import logging
 import os
+import re
 from typing import Any, Literal, Optional
 import json
 
@@ -32,6 +33,17 @@ STREAMING_INDICATOR = " ⚪"
 EDIT_DELAY_SECONDS = 1
 
 MAX_MESSAGE_NODES = 500
+
+DISCORD_TOOLS = [
+    dict(type="function", function=dict(
+        name="react", description="Add an emoji reaction to the message you are replying to. Pass a unicode emoji, or a custom server emoji name (use list_emojis to see them).",
+        parameters={"type": "object", "properties": {"emoji": {"type": "string", "description": "Unicode emoji or server emoji name"}}, "required": ["emoji"]},
+    )),
+    dict(type="function", function=dict(
+        name="list_emojis", description="List this server's custom emojis as name:id pairs. To use one in your own message, write <:name:id> (or <a:name:id> for animated).",
+        parameters={"type": "object", "properties": {}},
+    )),
+]
 
 
 def resolve_env(node: Any) -> Any:
@@ -127,6 +139,8 @@ def _msg_display_text(msg: discord.Message) -> str:
             embed_parts.append("\n".join(parts))
     if embed_parts:
         return "\n".join(embed_parts)
+    if msg.stickers:
+        return "[sticker: " + ", ".join(s.name for s in msg.stickers) + "]"
     if msg.attachments:
         return "[attachment]"
     return ""
@@ -277,7 +291,7 @@ async def on_message(new_msg: discord.Message) -> None:
 
             async with curr_node.lock:
                 if curr_node.text == None:
-                    cleaned_content = curr_msg.content.removeprefix(discord_bot.user.mention).lstrip()
+                    cleaned_content = re.sub(r"<a?:(\w+):\d+>", r":\1:", curr_msg.content.removeprefix(discord_bot.user.mention).lstrip())
 
                     good_attachments = [att for att in curr_msg.attachments if att.content_type and any(att.content_type.startswith(x) for x in ("text", "image"))]
 
@@ -289,6 +303,8 @@ async def on_message(new_msg: discord.Message) -> None:
                         ([cleaned_content] if cleaned_content else [])
                         + ["\n".join(filter(None, (embed.title, embed.description, embed.footer.text))) for embed in curr_msg.embeds]
                         + [component.content for component in curr_msg.components if component.type == discord.ComponentType.text_display]
+                        + [f"[sticker: {s.name}]" for s in curr_msg.stickers]
+                        + [f"[gif: {url}]" for embed in curr_msg.embeds for url in (getattr(embed.image, "url", None), getattr(embed.thumbnail, "url", None), getattr(embed.video, "url", None)) if url]
                         + [resp.text for att, resp in zip(good_attachments, attachment_responses) if att.content_type.startswith("text")]
                     )
 
@@ -363,7 +379,7 @@ async def on_message(new_msg: discord.Message) -> None:
         response_msgs = []
         response_contents = []
 
-        all_mcp_tools = [t for s in mcp_tools.values() for t in s["tools"]]
+        all_mcp_tools = DISCORD_TOOLS + [t for s in mcp_tools.values() for t in s["tools"]]
         openai_kwargs = dict(model=model, messages=messages[::-1], stream=True, extra_headers=extra_headers, extra_query=extra_query, extra_body=extra_body, tools=all_mcp_tools or None)
 
         use_plain_responses = True  # Force plain text responses
@@ -415,12 +431,26 @@ async def on_message(new_msg: discord.Message) -> None:
                     openai_kwargs["messages"].append(dict(role="assistant", content=curr_content, tool_calls=[dict(id=tc["id"], type="function", function=tc["function"]) for tc in tool_calls]))
                     for tc in tool_calls:
                         result_text = "Error: tool not found"
-                        for s in mcp_tools.values():
-                            if any(t["function"]["name"] == tc["function"]["name"] for t in s["tools"]):
-                                result = await s["session"].call_tool(tc["function"]["name"], json.loads(tc["function"]["arguments"] or "{}"))
-                                result_text = chr(10).join(c.text for c in result.content if hasattr(c, "text"))
-                                logging.info(f"Tool result ({tc["function"]["name"]}): {result_text[:150]!r}")
-                                break
+                        tool_name = tc["function"]["name"]
+                        tool_args = json.loads(tc["function"]["arguments"] or "{}")
+                        if tool_name == "react":
+                            emoji = tool_args.get("emoji", "").strip().strip(":")
+                            if new_msg.guild and (match := next((e for e in new_msg.guild.emojis if e.name == emoji), None)):
+                                emoji = str(match)
+                            try:
+                                await new_msg.add_reaction(emoji)
+                                result_text = f"Reacted to the message with {emoji}"
+                            except discord.HTTPException:
+                                result_text = "Error: invalid emoji"
+                        elif tool_name == "list_emojis":
+                            result_text = "\n".join(f"{e.name}:{e.id}{' (animated)' if e.animated else ''}" for e in (new_msg.guild.emojis if new_msg.guild else [])) or "No custom emojis"
+                        else:
+                            for s in mcp_tools.values():
+                                if any(t["function"]["name"] == tool_name for t in s["tools"]):
+                                    result = await s["session"].call_tool(tool_name, tool_args)
+                                    result_text = chr(10).join(c.text for c in result.content if hasattr(c, "text"))
+                                    logging.info(f"Tool result ({tool_name}): {result_text[:150]!r}")
+                                    break
                         openai_kwargs["messages"].append(dict(role="tool", tool_call_id=tc["id"], content=result_text))
 
                 for content in response_contents:
