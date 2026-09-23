@@ -7,14 +7,14 @@ status_message:
 
 max_text: 100000
 max_images: 5
-max_messages: 25
+max_messages: 50
 
 use_plain_responses: false
 allow_dms: true
 
 permissions:
   users:
-    admin_ids: []
+    admin_ids: [501838415831236628]
     allowed_ids: []
     blocked_ids: []
 
@@ -23,7 +23,7 @@ permissions:
     blocked_ids: []
 
   channels:
-    allowed_ids: []
+    allowed_ids: [1508790141903179868]
     blocked_ids: []
 
 providers:
@@ -59,16 +59,7 @@ providers:
     base_url: http://localhost:8000/v1
 
 models:
-  openai/gpt-5.5:
-    reasoning_effort: high
-    verbosity: medium
-
-  openrouter/~anthropic/claude-opus-latest:
-    tools:
-      - type: openrouter:web_search
-      - type: openrouter:web_fetch
-
-  ollama/llama4:
+    openrouter/openrouter/free:
 
 system_prompt: |
   You are a snarky Discord chatbot. Be informative but harsh.
