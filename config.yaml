@@ -23,7 +23,7 @@ permissions:
     blocked_ids: []
 
   channels:
-    allowed_ids: [1508790141903179868, 1466864561444356138]
+    allowed_ids: [1466864561444356138]
     blocked_ids: []
 
 providers:
@@ -58,8 +58,13 @@ providers:
   vllm:
     base_url: http://localhost:8000/v1
 
+  nanogpt:
+    base_url: https://nano-gpt.com/api/v1
+    api_key_env: NANOGPT_API_KEY
+
 models:
     openrouter/openrouter/free:
+    nanogpt/synth-2.5-pro:
 
 system_prompt: |
   You are a snarky Discord chatbot. Be informative but harsh.
